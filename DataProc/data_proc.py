@@ -12,6 +12,11 @@ current_dir = Path(__file__).resolve().parent.parent
 data_path = current_dir / "data"
 
 def station_extract():
+    """
+    Filter the station located in the Mongolian Plateau from "isd-history2024.csv" 
+    where the 35<latitude<54; 97<andlongitude<128; 2001<=the time span<=2022 
+    :return: station IDs 'menggu_stations.csv'
+    """
     data = pd.read_csv( data_path / 'isd-history2024.csv')
     pd.set_option('display.max_columns', None)
     pd.set_option('display.max_rows', None)
@@ -44,10 +49,10 @@ def station_extract():
     stationName = data['STATION NAME'][bool]
 
     stationInfo = pd.concat([stationID, stationName, stationLon, stationLat, stationElev], axis=1, ignore_index=False)   
-    # print(len(stationID), len(stationInfo)) #244个无重复站点    
+    # print(len(stationID), len(stationInfo)) #244 unique sites   
     stationInfo.drop_duplicates(inplace=True, ignore_index=True)
     stationInfo.reset_index(drop=True, inplace=True)   
-    stationInfo.to_csv(data_path / 'menggu_stations.csv', index=False) # 用于绘制研究区概况图
+    stationInfo.to_csv(data_path / 'menggu_stations.csv', index=False) # For study area map 
 
 def ExtrMCD12Q2():
     phenology = ['Greenup']
