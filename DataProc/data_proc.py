@@ -114,8 +114,8 @@ def un_gz(file_path):
 
 def quality_check(isd_meter_file): 
     """Check the Quality of ISD Meteorological Files"""
-    if len(isd_meter_file) <300:
-        return 0
+    if (len(isd_meter_file) <300) or (isd_meter_file['month'].nunique() < 12):
+        return 0   
 
 def dataproce(f_name, f_path, stationInfo):
     """
