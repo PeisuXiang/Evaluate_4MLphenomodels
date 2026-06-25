@@ -136,10 +136,6 @@ def dataproce(f_name, f_path, stationInfo):
                  'hour1ofrainfall', 'hour6ofrainfall']
         # Read a fixed-width format file; set `dtype=str` to read as string first.
         Meter = pd.read_fwf(file_full_path, colspecs=colspecs, names=names, dtype=str, na_values=['-9999'])        
-        # if <300days, then empty
-        quality = quality_check(Meter)
-        if quality == 0:
-            return pd.DataFrame()
     except Exception as e:
         print(f"Read file {file_full_path} failed: {e}")
         return pd.DataFrame()
@@ -150,11 +146,14 @@ def dataproce(f_name, f_path, stationInfo):
         if col in Meter.columns:
             Meter[col] = pd.to_numeric(Meter[col], errors='coerce')
     
+    # --- Handling the trace precipitation coded as “-1” ---
     precip_cols = ['hour1ofrainfall', 'hour6ofrainfall']
     for col in precip_cols:
         if col in Meter.columns:            
             Meter.loc[Meter[col] == -1, col] = 0.05
             Meter.loc[Meter[col] < 0, col] = 0    
+            
+    # Extract site metadata (ID, latitude and longitude, elevation, Greenup)
     try:        
         stem = Path(f_name).stem
         parts = stem.split('-')
@@ -167,19 +166,22 @@ def dataproce(f_name, f_path, stationInfo):
         if matching_rows.empty:
             print(f"Warning: ID {stationid_6digit} not found!")            
             station_id_val = stationid_6digit
-            lat_val = lon_val = elev_val = greenup_val = np.nan
+            # If the f_name not in "StationInfo.csv",  return empty
+            return pd.DataFrame()
         else:            
             row = matching_rows.iloc[0]
             station_id_val = str(row['STATION_ID']) 
             # station_id_val = stationid_6digit
             lat_val = row['LATITUDE']
             lon_val = row['LONGITUDE']
-            elev_val = row['ELEVATION']            
-            year_val = int(Meter['year'].iloc[0])
-            greenup_col = f"Greenup_{year_val}"
+            elev_val = row['ELEVATION']
             
+            # Extract Greenup with DOY format
+            year_val = int(Meter['year'].iloc[0])            
+            greenup_col = f"Greenup_{year_val}"            
             if greenup_col in row.index:
-                greenup_val = row[greenup_col]                
+                greenup_val = row[greenup_col]
+                # If Greenup == 32767, return empty
                 if greenup_val == 32767:                   
                     return pd.DataFrame()
                 else:
@@ -188,13 +190,10 @@ def dataproce(f_name, f_path, stationInfo):
             else:                
                 greenup_val = np.nan
                 return pd.DataFrame()
-
     except Exception as e:        
         return pd.DataFrame()
-    valid_records = len(Meter.dropna(subset=['temp']))
-    if valid_records < 300:        
-        return pd.DataFrame()
-    
+        
+    # ISD Data Aggregation (Daily Calculations)
     SCALE_FACTOR = 10
     base_cols = ['year', 'month', 'day']
     agg_dict = {
@@ -208,7 +207,11 @@ def dataproce(f_name, f_path, stationInfo):
     agg_dict = {k: v for k, v in agg_dict.items() if k in Meter.columns}
     if not agg_dict:        
         return pd.DataFrame()   
-    daily_stats = Meter.groupby(base_cols).agg(agg_dict).reset_index()    
+    daily_stats = Meter.groupby(base_cols).agg(agg_dict).reset_index()
+    # if <300 days, then empty
+    quality = quality_check(daily_stats)
+    if quality == 0:
+        return pd.DataFrame()
     daily_stats.columns = ['_'.join(col).strip('_') for col in daily_stats.columns]
     
     rename_dict = {
@@ -230,6 +233,9 @@ def dataproce(f_name, f_path, stationInfo):
     
     year_val = int(daily_stats['year'].iloc[0])
     is_leap = (year_val % 4 == 0 and year_val % 100 != 0) or (year_val % 400 == 0)
+    valid_records = len(Meter.dropna(subset=['temp']))
+    if valid_records < 300:        
+        return pd.DataFrame()
     days_in_year = 366 if is_leap else 365    
     date_range = pd.date_range(start=f"{year_val}-01-01", periods=days_in_year, freq='D')    
     daily_stats['date'] = pd.to_datetime(daily_stats[['year', 'month', 'day']])
