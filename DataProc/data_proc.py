@@ -15,7 +15,7 @@ def station_extract():
     """
     Filter the station located in the Mongolian Plateau from "isd-history2024.csv" 
     where the 35<latitude<54; 97<andlongitude<128; 2001<=the time span<=2022 
-    :return: station IDs 'menggu_stations.csv'
+    :return: station information in 'menggu_stations.csv'
     """
     data = pd.read_csv( data_path / 'isd-history2024.csv')
     pd.set_option('display.max_columns', None)
@@ -55,6 +55,11 @@ def station_extract():
     stationInfo.to_csv(data_path / 'menggu_stations.csv', index=False) # For study area map 
 
 def ExtrMCD12Q2():
+    """
+    Add green-up date to the station information
+    input: 'menggu_stations.csv'(the station information) extracted by 'station_extract()'
+    output:  "StationInfo.csv"
+    """
     phenology = ['Greenup']
     years = range(2001, 2023)    
     stationInfo = pd.read_csv(data_path / 'menggu_stations.csv',dtype={2: float, 3: float})
@@ -62,7 +67,7 @@ def ExtrMCD12Q2():
     for idx_year, year in enumerate(years):
         for f in phenology:
             tifile = f'MCD12Q2.A{year}001.{f}.Num_Modes_01.tif'
-            filename = data_path / tifile
+            filename = Path("The MCD12Q2 path") / tifile
 
             if not filename.exists():
                 print(f"Warning: file not exist - {filename}")
@@ -72,14 +77,20 @@ def ExtrMCD12Q2():
             if dataset is None:
                 continue           
             geotrans = dataset.GetGeoTransform()
-            band = dataset.GetRasterBand(1)           
-            array_data = band.ReadAsArray()
+            band = dataset.GetRasterBand(1) 
             
+            # Load an array representing an entire region into memory in bulk
+            array_data = band.ReadAsArray()   
+            
+            # extract the coordinate values
             lons = stationInfo.iloc[:, 2].values
             lats = stationInfo.iloc[:, 3].values
             
+            # Calculate offsets in batches
             x_offsets = np.round((lons - geotrans[0]) / geotrans[1]).astype(int) 
-            y_offsets = np.round((lats - geotrans[3]) / geotrans[5]).astype(int)            
+            y_offsets = np.round((lats - geotrans[3]) / geotrans[5]).astype(int)
+            
+            # Boundary Check to Prevent Out-of-Bounds Access
             valid_mask = (x_offsets >= 0) & (x_offsets < array_data.shape[1]) & \
                          (y_offsets >= 0) & (y_offsets < array_data.shape[0])
             
