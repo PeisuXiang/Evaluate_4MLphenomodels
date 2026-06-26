@@ -14,7 +14,7 @@ data_path = current_dir / "data"
 def station_extract():
     """
     Filter the station located in the Mongolian Plateau from "isd-history2024.csv" 
-    where the 35<latitude<54; 97<andlongitude<128; 2001<=the time span<=2022 
+    where the 35<latitude<54; 97<longitude<128; 2001<=the time span<=2022 
     :return: station information in 'menggu_stations.csv'
     """
     data = pd.read_csv( data_path / 'isd-history2024.csv')
@@ -114,8 +114,19 @@ def un_gz(file_path):
 
 def quality_check(isd_meter_file): 
     """Check the Quality of ISD Meteorological Files"""
-    if (len(isd_meter_file) <300) or (isd_meter_file['month'].nunique() < 12):
-        return 0   
+    # if months<12, return 0
+    if isd_meter_file['month'].nunique() < 12:
+        return 0
+
+    # if days per month < 25, return 0
+    days_per_month = isd_meter_file.groupby('month')['day'].nunique()    
+    mindays = 25
+    is_valid = (days_per_month >= mindays).all()
+    if is_valid:
+        return 1
+    else:
+        return 0
+  
 
 def dataproce(f_name, f_path, stationInfo):
     """
