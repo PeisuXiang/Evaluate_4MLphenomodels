@@ -341,3 +341,139 @@ def ExtrMeteoData(ISD_MeteoroData_path):
                 compression='snappy'
         )
         
+def DataTimeRange():
+    """    
+    1. Cutoff point = current year Gdoy
+    2. Fixed length of 335 days
+    """
+    # load data
+    MetePheno_path = data_path / "StationMetePheno.parquet"
+    meter_data = pd.read_parquet(MetePheno_path, engine='pyarrow')
+
+    # Find all (Station_ID, Year) combinations that occur in consecutive years
+    station_years = meter_data[['STATION_ID', 'year', 'Gdoy']].copy().drop_duplicates()    
+    consecutive_pairs = station_years.merge(
+        station_years.rename(columns={'year': 'year_next'}),
+        on=['STATION_ID'],
+        how='inner'
+    )
+    consecutive_pairs = consecutive_pairs[consecutive_pairs['year'] + 1 == consecutive_pairs['year_next']]
+
+   target_years = pd.concat([
+        consecutive_pairs[['STATION_ID', 'year']],
+        consecutive_pairs[['STATION_ID', 'year_next']].rename(columns={'year_next': 'year'})
+    ]).drop_duplicates()    
+
+    # Eetrieve meteorological data of consecutive years
+    filtered_data = meter_data.merge(target_years, on=['STATION_ID', 'year'], how='inner')
+
+    # Extract data for 335 days using the Gdoy of 'current_year' as the cutoff point, 
+    # Gdoy_x -> year，Gdoy_y -> year_next    
+    gdoy_map = consecutive_pairs[['STATION_ID', 'year', 'Gdoy_x','year_next','Gdoy_y']].copy().rename(
+        columns={'year':'current_year','Gdoy_x': 'cut_Gdoy'}
+    )  
+
+    # Part 1: 提取当年返青后的数据
+    # 【修复点】：必须同时按 STATION_ID 和 year 进行合并，保留连接键完全匹配的行，防止数据量爆炸
+    part1 = filtered_data.merge(
+        gdoy_map,
+        left_on=['STATION_ID', 'year'],
+        right_on=['STATION_ID', 'current_year'],
+        how='inner'
+    ).query(
+        "DOY >= cut_Gdoy"
+    ).drop(columns=['Gdoy'])  # 【修复4】：清理掉合并后多余的 year_next 列（而不是不存在的 match_year）
+    print("Part1 实际列名:", part1.columns.tolist())  # 【修复1】：去掉括号，改为 .tolist()
+
+    # Part 2: 提取下一年返青前的数据
+    part2 = filtered_data.merge(
+        # gdoy_map.rename(columns={'year_next':'year'}),  # 【修复2】：补上缺失的右表 gdoy_map
+        gdoy_map,  # 【修复2】：补上缺失的右表 gdoy_map
+        left_on=['STATION_ID', 'year'],
+        right_on=['STATION_ID', 'year_next'],
+        how='inner'
+    ).query(
+        "DOY < cut_Gdoy"  # 【修复3】：删除了永远为True的 year == year_next 条件
+    ).drop(columns=['Gdoy'])
+    print("Part2 实际列名:", part2.columns.tolist())
+
+    # 拼接两段数据，连续年不一定连续排在一起，因此后面要排序
+    cut_data = pd.concat([part1, part2], ignore_index=True)
+
+    # # 6. 按站点和当前年排序，并截取前335天
+    # cut_data.sort_values(by=['STATION_ID', 'current_year', 'year_next', 'DOY'], inplace=True)
+    # 6. 【核心排序逻辑】：按站点、当前年、下一年、DOY 进行多级排序
+    # 这样 Pandas 会先按 STATION_ID 分组，再按 current_year 排序，
+    # 接着按 year_next 排序，最后在同一年内严格按照 DOY 升序排列。
+    cut_data.sort_values(
+        by=['STATION_ID', 'current_year', 'year', 'DOY'],
+        ascending=True,  # 默认即为True，显式写出更清晰
+        inplace=True
+    )
+    cut_data.drop_duplicates(
+        subset=['STATION_ID', 'year','current_year', 'DOY'],
+    inplace=True
+    )
+    cut_data.reset_index(drop=True, inplace=True)  # 让索引重新从 0, 1, 2... 开始
+
+    # pd.set_option('display.max_rows', None)
+    #print(f'cut_data:\n{cut_data.filter(items=["STATION_ID", "year", "current_year", "year_next"])}')
+    # pd.reset_option('display.max_rows')
+
+    max_len = 335
+    timeseries = cut_data.groupby(['STATION_ID', 'current_year'], group_keys=False).head(max_len).copy()
+    # output_path = data_path / "cut_data.csv"
+    # cut_data.head(2000).to_csv(output_path, index=False, encoding='utf-8-sig')
+
+    # 7. 标签更新：这一段是用来预测【下一年】的返青
+    timeseries['year'] = timeseries['current_year'] + 1
+
+    # 获取下一年的真实 Gdoy 并合并
+    next_year_gdoy = meter_data[['STATION_ID', 'year', 'Gdoy']].drop_duplicates(
+        subset=['STATION_ID', 'year']
+    ).rename(columns={'year': 'next_year'})
+
+    # how='left'：以左表（timeseries）为绝对基准，保留左表中的所有行。
+    # 只要左表中的 STATION_ID 和 year 能在右表中找到对应的 STATION_ID 和 next_year，就把右表的 Gdoy 拼过来；
+    # 如果找不到，对应位置就会填充 NaN（空值）。
+    # timeseries['year']所对应的气象数据，是从前一年的Gdoy起335天的序列
+    timeseries = timeseries.merge(next_year_gdoy, left_on=['STATION_ID', 'year'], right_on=['STATION_ID', 'next_year'],
+                                  how='left')
+
+    # 这里同样需要清理掉 merge 产生的后缀列
+    timeseries.drop(columns=['current_year', 'cut_Gdoy', 'Gdoy_y', 'next_year'], inplace=True)
+
+    # 1. 计算 GDD (生长度日)
+    base_temp = 5.0
+    # 先生成每日 GDD（这里也是生成新列，原始 Temp_mean 不变）
+    timeseries['daily_GDD'] = (timeseries['Temp_mean'] - base_temp).clip(lower=0)
+
+    # 2. 按 site 和 year 分组，计算累加值并生成新列
+    # 计算 GDD 的累加值
+    timeseries['GDD'] = timeseries.groupby(['STATION_ID', 'year'])['daily_GDD'].cumsum().round(2)
+
+    # 计算降水量的累加值
+    timeseries['GPD'] = timeseries.groupby(['STATION_ID', 'year'])['precipitation_sum'].cumsum().round(2)
+
+    # 【清理】删除临时计算列，保持最终数据整洁
+    if 'daily_GDD' in timeseries.columns:
+        timeseries.drop(columns=['daily_GDD'], inplace=True)
+
+    cols = ['STATION_ID', 'LONGITUDE', 'LATITUDE', 'ELEVATION', 'year', 'month', 'day', 'DOY',
+            'Temp_max', 'Temp_min', 'Temp_mean', 'GDD', 'GPD', 'VaporP_mean', 'precipitation_sum',
+            'dew-pointtemperature', 'windspeed_mean', 'PHO', 'cloudamount', 'Gdoy']
+
+    # 确保列存在再排序
+    cols = [c for c in cols if c in timeseries.columns]
+    timeseries = timeseries[cols]
+
+    # 验证输出结果
+    print("✅ 最终数据形状:", timeseries.shape)
+    print("\n各站点及标签年份分布:")
+    print(timeseries.groupby(['STATION_ID', 'year']).size())
+
+    # 9. 保存结果
+    output_path = data_path / 'DataTimeRange_335day_12months_25days.csv'
+    timeseries.to_csv(output_path, index=False)
+
+    return timeseries
