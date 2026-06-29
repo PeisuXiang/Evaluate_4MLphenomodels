@@ -407,54 +407,35 @@ def DataTimeRange():
     max_len = 335
     timeseries = cut_data.groupby(['STATION_ID', 'current_year'], group_keys=False).head(max_len).copy()    
 
-    # 7. 标签更新：这一段是用来预测【下一年】的返青
+    # Retrieve the Gdoy of the next year as the Gdoy of the 335-day time series
     timeseries['year'] = timeseries['current_year'] + 1
 
-    # 获取下一年的真实 Gdoy 并合并
+    # Get the  next year Gdoy to merge
     next_year_gdoy = meter_data[['STATION_ID', 'year', 'Gdoy']].drop_duplicates(
         subset=['STATION_ID', 'year']
-    ).rename(columns={'year': 'next_year'})
-
-    # how='left'：以左表（timeseries）为绝对基准，保留左表中的所有行。
-    # 只要左表中的 STATION_ID 和 year 能在右表中找到对应的 STATION_ID 和 next_year，就把右表的 Gdoy 拼过来；
-    # 如果找不到，对应位置就会填充 NaN（空值）。
-    # timeseries['year']所对应的气象数据，是从前一年的Gdoy起335天的序列
+    ).rename(columns={'year': 'next_year'})    
+    # `timeseries['year']` is a 335-day meteorological time series starting from the Gdoy of the previous year.
     timeseries = timeseries.merge(next_year_gdoy, left_on=['STATION_ID', 'year'], right_on=['STATION_ID', 'next_year'],
-                                  how='left')
-
-    # 这里同样需要清理掉 merge 产生的后缀列
+                                  how='left')    
     timeseries.drop(columns=['current_year', 'cut_Gdoy', 'Gdoy_y', 'next_year'], inplace=True)
 
-    # 1. 计算 GDD (生长度日)
-    base_temp = 5.0
-    # 先生成每日 GDD（这里也是生成新列，原始 Temp_mean 不变）
-    timeseries['daily_GDD'] = (timeseries['Temp_mean'] - base_temp).clip(lower=0)
-
-    # 2. 按 site 和 year 分组，计算累加值并生成新列
-    # 计算 GDD 的累加值
+    # Calculating GDD
+    base_temp = 5.0    
+    timeseries['daily_GDD'] = (timeseries['Temp_mean'] - base_temp).clip(lower=0)    
     timeseries['GDD'] = timeseries.groupby(['STATION_ID', 'year'])['daily_GDD'].cumsum().round(2)
 
-    # 计算降水量的累加值
+    # Calculate the cumulative precipitation
     timeseries['GPD'] = timeseries.groupby(['STATION_ID', 'year'])['precipitation_sum'].cumsum().round(2)
 
-    # 【清理】删除临时计算列，保持最终数据整洁
+    # Clear columns
     if 'daily_GDD' in timeseries.columns:
         timeseries.drop(columns=['daily_GDD'], inplace=True)
-
     cols = ['STATION_ID', 'LONGITUDE', 'LATITUDE', 'ELEVATION', 'year', 'month', 'day', 'DOY',
             'Temp_max', 'Temp_min', 'Temp_mean', 'GDD', 'GPD', 'VaporP_mean', 'precipitation_sum',
-            'dew-pointtemperature', 'windspeed_mean', 'PHO', 'cloudamount', 'Gdoy']
-
-    # 确保列存在再排序
+            'dew-pointtemperature', 'windspeed_mean', 'PHO', 'cloudamount', 'Gdoy']    
     cols = [c for c in cols if c in timeseries.columns]
-    timeseries = timeseries[cols]
-
-    # 验证输出结果
-    print("✅ 最终数据形状:", timeseries.shape)
-    print("\n各站点及标签年份分布:")
-    print(timeseries.groupby(['STATION_ID', 'year']).size())
-
-    # 9. 保存结果
+    timeseries = timeseries[cols]   
+    
     output_path = data_path / 'DataTimeRange_335day_12months_25days.csv'
     timeseries.to_csv(output_path, index=False)
 
