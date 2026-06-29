@@ -175,14 +175,12 @@ def dataproce(f_name, f_path, stationInfo):
         matching_rows = stationInfo[mask]
 
         if matching_rows.empty:
-            print(f"Warning: ID {stationid_6digit} not found!")            
-            station_id_val = stationid_6digit
+            print(f"Warning: ID {stationid_6digit} not found!")          
             # If the f_name not in "StationInfo.csv",  return empty
             return pd.DataFrame()
         else:            
             row = matching_rows.iloc[0]
-            station_id_val = str(row['STATION_ID']) 
-            # station_id_val = stationid_6digit
+            station_id_val = str(row['STATION_ID'])             
             lat_val = row['LATITUDE']
             lon_val = row['LONGITUDE']
             elev_val = row['ELEVATION']
@@ -219,7 +217,7 @@ def dataproce(f_name, f_path, stationInfo):
     if not agg_dict:        
         return pd.DataFrame()   
     daily_stats = Meter.groupby(base_cols).agg(agg_dict).reset_index()
-    # if <300 days, then empty
+    # if months <12 & days/month<25, then empty
     quality = quality_check(daily_stats)
     if quality == 0:
         return pd.DataFrame()
@@ -242,15 +240,12 @@ def dataproce(f_name, f_path, stationInfo):
         if col in daily_stats.columns:
             daily_stats[col] = (daily_stats[col] / SCALE_FACTOR).round(2)
     
+    # Ensure 365 or 366 days per year
     year_val = int(daily_stats['year'].iloc[0])
-    is_leap = (year_val % 4 == 0 and year_val % 100 != 0) or (year_val % 400 == 0)
-    valid_records = len(Meter.dropna(subset=['temp']))
-    if valid_records < 300:        
-        return pd.DataFrame()
+    is_leap = (year_val % 4 == 0 and year_val % 100 != 0) or (year_val % 400 == 0)    
     days_in_year = 366 if is_leap else 365    
     date_range = pd.date_range(start=f"{year_val}-01-01", periods=days_in_year, freq='D')    
-    daily_stats['date'] = pd.to_datetime(daily_stats[['year', 'month', 'day']])
-    
+    daily_stats['date'] = pd.to_datetime(daily_stats[['year', 'month', 'day']])    
     daily_stats = pd.DataFrame({'date': date_range}).merge(daily_stats, on='date', how='left')
    
     daily_stats['STATION_ID'] = station_id_val
@@ -270,6 +265,7 @@ def dataproce(f_name, f_path, stationInfo):
             daily_stats[col] = daily_stats[col].interpolate(method='linear', limit_direction='both')            
             daily_stats[col] = daily_stats[col].fillna(method='ffill').fillna(method='bfill')
    
+    # Calculate the photoperiod base on Lat and DOY
     import math
     def calc_photoperiod(row):
         lat = row['LATITUDE']
@@ -278,17 +274,16 @@ def dataproce(f_name, f_path, stationInfo):
         sin1 = 2 * math.pi * doy / 365 - 1.39
         tan1 = math.tan(0.409 * math.sin(sin1))
        
-        tan2 = -math.tan(lat * math.pi / 180)        
+        tan2 = -math.tan(math.radians(lat))        
         acos_arg = max(-1.0, min(1.0, tan2 * tan1))
        
         photoperiod = (24 / math.pi) * math.acos(acos_arg)
         return round(photoperiod, 2)
-
     daily_stats['PHO'] = daily_stats.apply(calc_photoperiod, axis=1)
+    
     cols = ['STATION_ID', 'LONGITUDE', 'LATITUDE', 'ELEVATION', 'year', 'month','day','DOY',
             'Temp_max', 'Temp_min', 'Temp_mean',  'VaporP_mean', 'precipitation_sum',
             'dew-pointtemperature', 'windspeed_mean', 'PHO', 'cloudamount', 'Gdoy']
-
     cols = [c for c in cols if c in daily_stats.columns]
     daily_stats = daily_stats[cols]
 
@@ -302,8 +297,7 @@ def ExtrMeteoData(ISD_MeteoroData_path):
     df_list, y_Greenup, y_Dormancy = [], [], []
     base_path = Path(ISD_MeteoroData_path)
     output_path = data_path / "StationMetePheno.parquet"
-    has_data = False
-    
+       
     for year_folder in base_path.iterdir():        
         if not year_folder.is_dir():
             continue
