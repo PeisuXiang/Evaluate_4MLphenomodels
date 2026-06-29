@@ -367,12 +367,10 @@ def DataTimeRange():
     # Eetrieve meteorological data of consecutive years
     filtered_data = meter_data.merge(target_years, on=['STATION_ID', 'year'], how='inner')
 
-    # Extract data for 335 days using the Gdoy of 'current_year' as the cutoff point, 
-    # Gdoy_x -> year，Gdoy_y -> year_next    
+    # Extract data from 'current_year' Gdoy to next year Gdoy     
     gdoy_map = consecutive_pairs[['STATION_ID', 'year', 'Gdoy_x','year_next','Gdoy_y']].copy().rename(
         columns={'year':'current_year','Gdoy_x': 'cut_Gdoy'}
-    )  
-
+    ) 
     # Part 1: Extracting Data After Current Year Gdoy    
     part1 = filtered_data.merge(
         gdoy_map,
@@ -391,8 +389,9 @@ def DataTimeRange():
         how='inner'
     ).query(
         "DOY < cut_Gdoy"  
-    ).drop(columns=['Gdoy'])       
-    cut_data = pd.concat([part1, part2], ignore_index=True)   
+    ).drop(columns=['Gdoy']) 
+
+    cut_data = pd.concat([part1, part2], ignore_index=True)     
     cut_data.sort_values(
         by=['STATION_ID', 'current_year', 'year', 'DOY'],
         ascending=True, 
@@ -402,16 +401,11 @@ def DataTimeRange():
         subset=['STATION_ID', 'year','current_year', 'DOY'],
     inplace=True
     )
-    cut_data.reset_index(drop=True, inplace=True) 
+    cut_data.reset_index(drop=True, inplace=True)   
 
-    # pd.set_option('display.max_rows', None)
-    #print(f'cut_data:\n{cut_data.filter(items=["STATION_ID", "year", "current_year", "year_next"])}')
-    # pd.reset_option('display.max_rows')
-
+    # Extract a 335-day timeseries
     max_len = 335
-    timeseries = cut_data.groupby(['STATION_ID', 'current_year'], group_keys=False).head(max_len).copy()
-    # output_path = data_path / "cut_data.csv"
-    # cut_data.head(2000).to_csv(output_path, index=False, encoding='utf-8-sig')
+    timeseries = cut_data.groupby(['STATION_ID', 'current_year'], group_keys=False).head(max_len).copy()    
 
     # 7. 标签更新：这一段是用来预测【下一年】的返青
     timeseries['year'] = timeseries['current_year'] + 1
