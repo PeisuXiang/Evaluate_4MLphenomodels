@@ -373,8 +373,7 @@ def DataTimeRange():
         columns={'year':'current_year','Gdoy_x': 'cut_Gdoy'}
     )  
 
-    # Part 1: 提取当年返青后的数据
-    # 【修复点】：必须同时按 STATION_ID 和 year 进行合并，保留连接键完全匹配的行，防止数据量爆炸
+    # Part 1: Extracting Data After Current Year Gdoy    
     part1 = filtered_data.merge(
         gdoy_map,
         left_on=['STATION_ID', 'year'],
@@ -382,39 +381,28 @@ def DataTimeRange():
         how='inner'
     ).query(
         "DOY >= cut_Gdoy"
-    ).drop(columns=['Gdoy'])  # 【修复4】：清理掉合并后多余的 year_next 列（而不是不存在的 match_year）
-    print("Part1 实际列名:", part1.columns.tolist())  # 【修复1】：去掉括号，改为 .tolist()
+    ).drop(columns=['Gdoy'])  
 
-    # Part 2: 提取下一年返青前的数据
-    part2 = filtered_data.merge(
-        # gdoy_map.rename(columns={'year_next':'year'}),  # 【修复2】：补上缺失的右表 gdoy_map
-        gdoy_map,  # 【修复2】：补上缺失的右表 gdoy_map
+    # Part 2: Extracting Data Before the Next Year Gdoy 
+    part2 = filtered_data.merge(        
+        gdoy_map,  
         left_on=['STATION_ID', 'year'],
         right_on=['STATION_ID', 'year_next'],
         how='inner'
     ).query(
-        "DOY < cut_Gdoy"  # 【修复3】：删除了永远为True的 year == year_next 条件
-    ).drop(columns=['Gdoy'])
-    print("Part2 实际列名:", part2.columns.tolist())
-
-    # 拼接两段数据，连续年不一定连续排在一起，因此后面要排序
-    cut_data = pd.concat([part1, part2], ignore_index=True)
-
-    # # 6. 按站点和当前年排序，并截取前335天
-    # cut_data.sort_values(by=['STATION_ID', 'current_year', 'year_next', 'DOY'], inplace=True)
-    # 6. 【核心排序逻辑】：按站点、当前年、下一年、DOY 进行多级排序
-    # 这样 Pandas 会先按 STATION_ID 分组，再按 current_year 排序，
-    # 接着按 year_next 排序，最后在同一年内严格按照 DOY 升序排列。
+        "DOY < cut_Gdoy"  
+    ).drop(columns=['Gdoy'])       
+    cut_data = pd.concat([part1, part2], ignore_index=True)   
     cut_data.sort_values(
         by=['STATION_ID', 'current_year', 'year', 'DOY'],
-        ascending=True,  # 默认即为True，显式写出更清晰
+        ascending=True, 
         inplace=True
     )
     cut_data.drop_duplicates(
         subset=['STATION_ID', 'year','current_year', 'DOY'],
     inplace=True
     )
-    cut_data.reset_index(drop=True, inplace=True)  # 让索引重新从 0, 1, 2... 开始
+    cut_data.reset_index(drop=True, inplace=True) 
 
     # pd.set_option('display.max_rows', None)
     #print(f'cut_data:\n{cut_data.filter(items=["STATION_ID", "year", "current_year", "year_next"])}')
